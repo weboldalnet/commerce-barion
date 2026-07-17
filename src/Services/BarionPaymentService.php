@@ -5,10 +5,11 @@ namespace Weboldalnet\CommerceBarion\Services;
 use Barion\BarionClient;
 use Barion\Enumerations\BarionEnvironment;
 use Barion\Enumerations\Currency;
-use Barion\Enumerations\Language;
+use Barion\Enumerations\UILocale;
 use Barion\Enumerations\PaymentType;
+use Barion\Enumerations\FundingSourceType;
 use Barion\Models\Common\ItemModel;
-use Barion\Models\Payment\PaymentStartRequest;
+use Barion\Models\Payment\PreparePaymentRequestModel;
 use Barion\Models\Payment\PaymentTransactionModel;
 use Weboldalnet\CommerceCore\Data\PaymentRequestData;
 
@@ -26,16 +27,38 @@ class BarionPaymentService
      */
     public function startPayment(PaymentRequestData $data)
     {
-        $request = new PaymentStartRequest();
+        $request = new PreparePaymentRequestModel();
         
         $request->POSKey = config('commerce-barion.pos_key');
-        $request->PaymentType = config('commerce-barion.payment_type', PaymentType::Immediate);
-        $request->GuestCheckOut = config('commerce-barion.guest_checkout_enabled', true);
-        $request->FundingSources = config('commerce-barion.funding_sources', ['All']);
+        
+        try {
+            $paymentType = config('commerce-barion.payment_type', 'Immediate');
+            $request->PaymentType = PaymentType::from($paymentType);
+        } catch (\Throwable $e) {
+            $request->PaymentType = PaymentType::Immediate;
+        }
+
+        $request->PaymentWindow = config('commerce-barion.payment_window', '0.00:30:00');
+        
+        $fundingSources = config('commerce-barion.funding_sources', ['All']);
+        $mappedFundingSources = [];
+        foreach ($fundingSources as $source) {
+            try {
+                $mappedFundingSources[] = FundingSourceType::from($source);
+            } catch (\Throwable $e) {
+                // Skip invalid funding sources
+            }
+        }
+        $request->FundingSources = !empty($mappedFundingSources) ? $mappedFundingSources : [FundingSourceType::All];
+
         $request->PaymentRequestId = (string)($data->orderNumber ?: $data->orderId);
         $request->PayerHint = config('commerce-barion.payer_hint_enabled', true) ? $data->customerEmail : null;
         $request->Locale = $this->mapLanguage($data->language);
-        $request->Currency = $data->currency;
+        try {
+            $request->Currency = Currency::from(strtoupper($data->currency));
+        } catch (\Throwable $e) {
+            $request->Currency = Currency::HUF;
+        }
         $request->CallbackUrl = $data->callbackUrl ?: (config('commerce-barion.callback_url') ?: route('commerce.barion.callback'));
         $request->RedirectUrl = $data->returnUrl ?: (config('commerce-barion.redirect_url') ?: route('commerce.barion.return'));
         
@@ -71,8 +94,8 @@ class BarionPaymentService
         }
         
         $request->AddTransaction($transaction);
-        
-        return $this->client->paymentStart($request);
+
+        return $this->client->PreparePayment($request);
     }
 
     /**
@@ -86,20 +109,20 @@ class BarionPaymentService
     /**
      * Nyelv kód leképezése Barion formátumra.
      */
-    protected function mapLanguage(?string $lang): string
+    protected function mapLanguage(?string $lang): UILocale
     {
         $lang = strtoupper($lang);
         return match ($lang) {
-            'HU' => 'hu-HU',
-            'EN' => 'en-US',
-            'DE' => 'de-DE',
-            'SL' => 'sl-SI',
-            'SK' => 'sk-SK',
-            'FR' => 'fr-FR',
-            'CZ' => 'cs-CZ',
-            'GR' => 'el-GR',
-            'ES' => 'es-ES',
-            default => config('commerce-barion.locale', 'hu-HU'),
+            'HU' => UILocale::HU,
+            'EN' => UILocale::EN,
+            'DE' => UILocale::DE,
+            'SL' => UILocale::SL,
+            'SK' => UILocale::SK,
+            'FR' => UILocale::FR,
+            'CZ' => UILocale::CZ,
+            'GR' => UILocale::GR,
+            'ES' => UILocale::ES,
+            default => UILocale::from(config('commerce-barion.locale', 'hu-HU')),
         };
     }
 }

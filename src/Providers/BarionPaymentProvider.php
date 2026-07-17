@@ -42,25 +42,30 @@ class BarionPaymentProvider implements PaymentProviderInterface
     {
         try {
             $response = $this->paymentService->startPayment($data);
-
-            if ($response->IsSuccessful()) {
+            if ($response->RequestSuccessful) {
                 return new PaymentCreateResult([
                     'success' => true,
                     'status' => PaymentStatus::PENDING,
                     'provider' => $this->getCode(),
-                    'providerTransactionId' => $response->PaymentId,
-                    'transactionId' => $data->orderNumber ?: $data->orderId,
-                    'redirectUrl' => $response->GatewayUrl,
+                    'provider_transaction_id' => $response->PaymentId,
+                    'transaction_id' => $data->orderNumber ?: $data->orderId,
+                    'redirect_url' => $response->PaymentRedirectUrl,
                     'message' => 'Barion fizetés elindítva.',
-                    'rawResponse' => (array)$response,
+                    'raw_response' => (array)$response,
                 ]);
+            }
+
+            $errorMessage = 'Ismeretlen hiba';
+            if (!empty($response->Errors)) {
+                $error = $response->Errors[0];
+                $errorMessage = ($error->Title ?? '') . ': ' . ($error->Description ?? '');
             }
 
             return new PaymentCreateResult([
                 'success' => false,
                 'status' => PaymentStatus::FAILED,
-                'message' => 'Barion hiba: ' . ($response->Errors[0]->Message ?? 'Ismeretlen hiba'),
-                'rawResponse' => (array)$response,
+                'message' => 'Barion hiba: ' . $errorMessage,
+                'raw_response' => (array)$response,
             ]);
 
         } catch (\Throwable $e) {

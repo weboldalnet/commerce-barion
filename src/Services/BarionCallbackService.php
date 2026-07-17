@@ -32,12 +32,12 @@ class BarionCallbackService
             // Lekérjük a tényleges állapotot a Bariontól
             $response = $this->paymentService->getPaymentState($paymentId);
 
-            if (!$response || !$response->IsSuccessful()) {
+            if (!$response || !$response->RequestSuccessful) {
                 return new PaymentCallbackResult([
                     'success' => false,
-                    'providerTransactionId' => $paymentId,
+                    'provider_transaction_id' => $paymentId,
                     'message' => 'Nem sikerült lekérdezni a Barion fizetés állapotát.',
-                    'rawPayload' => (array)$response,
+                    'raw_payload' => (array)$response,
                 ]);
             }
 
@@ -45,23 +45,25 @@ class BarionCallbackService
             
             // Az első tranzakció adatait vesszük alapul (Barionnál általában 1 tranzakció van egy fizetésben)
             $transaction = $response->Transactions[0] ?? null;
+            $orderId = $transaction ? $transaction->POSTransactionId : null;
 
             return new PaymentCallbackResult([
                 'success' => $status === PaymentStatus::PAID,
                 'status' => $status,
                 'provider' => 'barion',
-                'providerTransactionId' => $paymentId,
-                'transactionId' => $transaction ? $transaction->POSTransactionId : null,
+                'provider_transaction_id' => $paymentId,
+                'transaction_id' => $orderId,
+                'order_id' => $orderId,
                 'amount' => $response->Total,
-                'currency' => $response->Currency,
-                'message' => 'Barion állapot: ' . $response->Status,
-                'rawPayload' => (array)$response,
+                'currency' => $response->Currency instanceof \BackedEnum ? $response->Currency->value : (string)$response->Currency,
+                'message' => 'Barion állapot: ' . ($response->Status instanceof \BackedEnum ? $response->Status->value : (string)$response->Status),
+                'raw_payload' => (array)$response,
             ]);
 
         } catch (\Throwable $e) {
             return new PaymentCallbackResult([
                 'success' => false,
-                'providerTransactionId' => $paymentId,
+                'provider_transaction_id' => $paymentId,
                 'message' => 'Hiba a Barion callback feldolgozása során: ' . $e->getMessage(),
             ]);
         }
@@ -70,8 +72,12 @@ class BarionCallbackService
     /**
      * Barion státusz leképezése CommerceCore státuszra.
      */
-    protected function mapStatus(string $barionStatus): string
+    protected function mapStatus($barionStatus): string
     {
+        if ($barionStatus instanceof \Barion\Enumerations\PaymentStatus) {
+            $barionStatus = $barionStatus->value;
+        }
+
         return match ($barionStatus) {
             'Succeeded', 'Completed' => PaymentStatus::PAID,
             'Failed' => PaymentStatus::FAILED,
