@@ -13,7 +13,7 @@
                 "CommerceBarionServiceProvider"
             ],
             "aliases": {
-                "CommerceBarionServiceProvider": "CommerceBarionServiceProvider"
+                "CommerceBarionServiceProvider": "Weboldalnet\\CommerceBarion\\CommerceBarionServiceProvider"
             }
         }
     },
