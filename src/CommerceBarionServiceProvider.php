@@ -3,34 +3,54 @@
 namespace Weboldalnet\CommerceBarion;
 
 use Illuminate\Support\ServiceProvider;
-use Weboldalnet\CommerceBarion\Support\PackageHelper;
-use Weboldalnet\CommerceBarion\Console\ExtendViewsCommerceBarionsCommand;
-use Weboldalnet\CommerceBarion\Console\InstallCommerceBarionsCommand;
+use Weboldalnet\CommerceCore\Managers\PaymentManager;
+use Weboldalnet\CommerceBarion\Providers\BarionPaymentProvider;
 
 class CommerceBarionServiceProvider extends ServiceProvider
 {
+    /**
+     * Bootstrap the application services.
+     */
     public function boot()
     {
-        // route-ok
-        $this->loadRoutesFrom(__DIR__.'/../routes/web.php');
-        $this->loadViewsFrom(__DIR__.'/../settings/views', PackageHelper::PACKAGE_PREFIX);
-
-        // migrációk
-        //$this->loadMigrationsFrom(__DIR__.'/../database/migrations');
-
-        $publishList = [];
-        foreach (PackageHelper::PACKAGE_LIST as $name => $publish) {
+        // Config publikálhatóvá tétele
+        if ($this->app->runningInConsole()) {
             $this->publishes([
-                $publish['source'] => base_path($publish['destination']),
-            ], PackageHelper::PACKAGE_PREFIX . '-' . $name);
-
-            $publishList[$publish['source']] = base_path($publish['destination']);
+                __DIR__ . '/../config/commerce-barion.php' => config_path('commerce-barion.php'),
+            ], 'commerce-barion-config');
         }
 
-        $this->publishes($publishList, PackageHelper::PACKAGE_PREFIX . '-all');
+        // Route-ok betöltése
+        $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
+
+        // Provider regisztráció a commerce-core-ba
+        if (config('commerce-barion.enabled', true)) {
+            try {
+                $paymentManager = $this->app->make(PaymentManager::class);
+                $paymentManager->register(
+                    config('commerce-barion.provider_code', 'barion'),
+                    $this->app->make(BarionPaymentProvider::class)
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Barion regisztrációs hiba: ' . $e->getMessage());
+            }
+        }
     }
 
+    /**
+     * Register the application services.
+     */
     public function register()
     {
+        // Config merge
+        $this->mergeConfigFrom(
+            __DIR__ . '/../config/commerce-barion.php',
+            'commerce-barion'
+        );
+
+        // BarionPaymentProvider singleton regisztráció
+        $this->app->singleton(BarionPaymentProvider::class, function ($app) {
+            return new BarionPaymentProvider();
+        });
     }
 }
