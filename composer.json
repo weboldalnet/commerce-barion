@@ -1,0 +1,21 @@
+{
+    "name": "weboldalnet/commerce-barion",
+    "description": "Barion fizetési modul",
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+            "Weboldalnet\\CommerceBarion\\": [ "src/",  "app/"]
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "CommerceBarionServiceProvider"
+            ],
+            "aliases": {
+                "CommerceBarionServiceProvider": "CommerceBarionServiceProvider"
+            }
+        }
+    },
+    "require": {}
+}
