@@ -12,14 +12,85 @@ use Barion\Models\Common\ItemModel;
 use Barion\Models\Payment\PreparePaymentRequestModel;
 use Barion\Models\Payment\PaymentTransactionModel;
 use Weboldalnet\CommerceCore\Data\PaymentRequestData;
+use Weboldalnet\CommerceCore\Services\ProviderLogger;
 
 class BarionPaymentService
 {
     protected $client;
 
+    /** @var ProviderLogger|null */
+    protected $logger;
+
     public function __construct()
     {
         $this->client = BarionClientFactory::create();
+
+        try {
+            $this->logger = app(ProviderLogger::class);
+        } catch (\Throwable $e) {
+            $this->logger = null;
+        }
+    }
+
+    /**
+     * Naplózás a commerce_provider_logs táblába, ha a commerce-barion.log_payloads engedélyezett.
+     * A POSKey soha nem kerül bele a naplózott payloadba.
+     */
+    protected function logApiCall($endpoint, array $request, $response, $isSuccess, $errorMessage = null, $orderId = null)
+    {
+        if (!$this->logger || !config('commerce-barion.log_payloads', true)) {
+            return;
+        }
+
+        try {
+            $this->logger->logResponse(
+                'payment',
+                config('commerce-barion.provider_code', 'barion'),
+                $endpoint,
+                $request,
+                self::toArray($response),
+                $isSuccess ? 200 : 400,
+                (bool) $isSuccess,
+                $errorMessage,
+                is_numeric($orderId) ? (int) $orderId : null
+            );
+        } catch (\Throwable $e) {
+            // A naplózás soha ne buktassa el a fizetési folyamatot.
+            \Illuminate\Support\Facades\Log::warning('Barion provider log hiba: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Barion SDK válaszobjektum tiszta tömbbé alakítása (a beágyazott objektumokkal együtt).
+     */
+    protected static function toArray($value): ?array
+    {
+        if ($value === null) {
+            return null;
+        }
+        $decoded = json_decode(json_encode($value), true);
+
+        return is_array($decoded) ? $decoded : ['value' => $value];
+    }
+
+    /**
+     * A fizetési kérés naplózható változata – POSKey nélkül.
+     */
+    protected static function loggableRequest(PaymentRequestData $data): array
+    {
+        return [
+            'order_id' => $data->orderId,
+            'order_number' => $data->orderNumber,
+            'payment_request_id' => (string) ($data->orderNumber ?: $data->orderId),
+            'amount' => $data->amount,
+            'currency' => $data->currency,
+            'language' => $data->language,
+            'callback_url' => $data->callbackUrl,
+            'return_url' => $data->returnUrl,
+            'items' => $data->items,
+            'environment' => config('commerce-barion.environment'),
+            'payment_type' => config('commerce-barion.payment_type'),
+        ];
     }
 
     /**
@@ -95,7 +166,22 @@ class BarionPaymentService
         
         $request->AddTransaction($transaction);
 
-        return $this->client->PreparePayment($request);
+        try {
+            $response = $this->client->PreparePayment($request);
+        } catch (\Throwable $e) {
+            $this->logApiCall('PreparePayment', self::loggableRequest($data), null, false, $e->getMessage(), $data->orderId);
+            throw $e;
+        }
+
+        $isSuccess = (bool) ($response->RequestSuccessful ?? false);
+        $errorMessage = null;
+        if (!$isSuccess && !empty($response->Errors)) {
+            $error = $response->Errors[0];
+            $errorMessage = trim(($error->Title ?? '') . ': ' . ($error->Description ?? ''));
+        }
+        $this->logApiCall('PreparePayment', self::loggableRequest($data), $response, $isSuccess, $errorMessage, $data->orderId);
+
+        return $response;
     }
 
     /**
@@ -103,7 +189,21 @@ class BarionPaymentService
      */
     public function getPaymentState(string $paymentId)
     {
-        return $this->client->getPaymentState($paymentId);
+        try {
+            $response = $this->client->getPaymentState($paymentId);
+        } catch (\Throwable $e) {
+            $this->logApiCall('GetPaymentState', ['payment_id' => $paymentId], null, false, $e->getMessage());
+            throw $e;
+        }
+
+        $this->logApiCall(
+            'GetPaymentState',
+            ['payment_id' => $paymentId],
+            $response,
+            (bool) ($response->RequestSuccessful ?? false)
+        );
+
+        return $response;
     }
 
     /**

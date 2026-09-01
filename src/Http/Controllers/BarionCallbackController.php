@@ -4,6 +4,7 @@ namespace Weboldalnet\CommerceBarion\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Log;
 use Weboldalnet\CommerceCore\Services\PaymentCallbackProcessor;
 
 class BarionCallbackController extends Controller
@@ -21,11 +22,19 @@ class BarionCallbackController extends Controller
     public function handleReturn(Request $request)
     {
         $provider = config('commerce-barion.provider_code', 'barion');
-        $result = $this->callbackProcessor->process($provider, $request->all());
 
-        // Irányítás a webshop eredmény oldalára
-        if ($result && $result->transactionId) {
-            return redirect()->route('site.webshop.payment.result', ['order' => $result->transactionId]);
+        try {
+            // A process() tömböt ad vissza: ['skipped' => bool, 'transaction' => PaymentTransaction, 'result' => PaymentCallbackResult]
+            $processResult = $this->callbackProcessor->process($provider, $request->all());
+        } catch (\Throwable $e) {
+            Log::error('Barion visszatérés feldolgozási hiba: ' . $e->getMessage());
+            $processResult = null;
+        }
+
+        // Irányítás a webshop eredmény oldalára a rendelés azonosítója alapján
+        $orderId = $processResult['transaction']->order_id ?? null;
+        if ($orderId) {
+            return redirect()->route('site.webshop.payment.result', ['order' => $orderId]);
         }
 
         return redirect()->route('site.webshop.checkout.index')->with('error', 'Sikertelen fizetési visszatérés.');
@@ -37,8 +46,19 @@ class BarionCallbackController extends Controller
     public function handleCallback(Request $request)
     {
         $provider = config('commerce-barion.provider_code', 'barion');
-        $this->callbackProcessor->process($provider, $request->all());
 
-        return response()->json(['success' => true]);
+        try {
+            $processResult = $this->callbackProcessor->process($provider, $request->all());
+        } catch (\Throwable $e) {
+            Log::error('Barion callback feldolgozási hiba: ' . $e->getMessage());
+
+            // Szándékosan 500: így a Barion újrapróbálja a callback kézbesítését.
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'skipped' => $processResult['skipped'] ?? false,
+        ]);
     }
 }

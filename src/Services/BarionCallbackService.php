@@ -3,15 +3,49 @@
 namespace Weboldalnet\CommerceBarion\Services;
 
 use Weboldalnet\CommerceCore\Data\PaymentCallbackResult;
+use Weboldalnet\CommerceCore\Services\ProviderLogger;
 use Weboldalnet\CommerceCore\Status\PaymentStatus;
 
 class BarionCallbackService
 {
     protected $paymentService;
 
+    /** @var ProviderLogger|null */
+    protected $logger;
+
     public function __construct(BarionPaymentService $paymentService)
     {
         $this->paymentService = $paymentService;
+
+        try {
+            $this->logger = app(ProviderLogger::class);
+        } catch (\Throwable $e) {
+            $this->logger = null;
+        }
+    }
+
+    /**
+     * A beérkezett Barion visszatérés/callback naplózása a commerce_provider_logs táblába.
+     */
+    protected function logCallback(array $payload, $isSuccess, $errorMessage = null, $orderId = null): void
+    {
+        if (!$this->logger || !config('commerce-barion.log_payloads', true)) {
+            return;
+        }
+
+        try {
+            $this->logger->logCallback(
+                'payment',
+                config('commerce-barion.provider_code', 'barion'),
+                $payload,
+                (bool) $isSuccess,
+                $errorMessage,
+                is_numeric($orderId) ? (int) $orderId : null
+            );
+        } catch (\Throwable $e) {
+            // A naplózás soha ne buktassa el a callback feldolgozását.
+            \Illuminate\Support\Facades\Log::warning('Barion callback log hiba: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -22,6 +56,8 @@ class BarionCallbackService
         $paymentId = $payload['paymentId'] ?? ($payload['PaymentId'] ?? null);
 
         if (!$paymentId) {
+            $this->logCallback($payload, false, 'Hiányzó Barion PaymentId.');
+
             return new PaymentCallbackResult([
                 'success' => false,
                 'message' => 'Hiányzó Barion PaymentId.',
@@ -33,6 +69,8 @@ class BarionCallbackService
             $response = $this->paymentService->getPaymentState($paymentId);
 
             if (!$response || !$response->RequestSuccessful) {
+                $this->logCallback($payload, false, 'Nem sikerült lekérdezni a Barion fizetés állapotát.');
+
                 return new PaymentCallbackResult([
                     'success' => false,
                     'provider_transaction_id' => $paymentId,
@@ -42,10 +80,12 @@ class BarionCallbackService
             }
 
             $status = $this->mapStatus($response->Status);
-            
+
             // Az első tranzakció adatait vesszük alapul (Barionnál általában 1 tranzakció van egy fizetésben)
             $transaction = $response->Transactions[0] ?? null;
             $orderId = $transaction ? $transaction->POSTransactionId : null;
+
+            $this->logCallback($payload, $status === PaymentStatus::PAID, null, $orderId);
 
             return new PaymentCallbackResult([
                 'success' => $status === PaymentStatus::PAID,
@@ -61,6 +101,8 @@ class BarionCallbackService
             ]);
 
         } catch (\Throwable $e) {
+            $this->logCallback($payload, false, $e->getMessage());
+
             return new PaymentCallbackResult([
                 'success' => false,
                 'provider_transaction_id' => $paymentId,
