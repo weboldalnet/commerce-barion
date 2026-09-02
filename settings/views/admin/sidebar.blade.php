@@ -1,26 +1,23 @@
-@if($settings->has_blog)
-    <div class="mb-1">
-        <a class="menu-point collapsed @if($menuHelper::isActiveMenu($menuHelper::ARTICLES, $url)) active @endif"
-           data-toggle="collapse" href="#articleCollapse" role="button"
-        >
-            <span><i class="fas fa-newspaper mr-1"></i>Blog</span>
-            <i class="fa-solid fa-chevron-down"></i>
-        </a>
-        <div class="collapse collapse-box @if($menuHelper::isActiveMenu($menuHelper::ARTICLES, $url)) show @endif" id="articleCollapse">
-            <div class="collapse-menu-points">
-                <a href="/article-list" class="fw-800">
-                    Cikkek listája <i class="fa-solid fa-chevron-right"></i>
-                </a>
-                <a href="/article-category-list">
-                    Cikk kategóriák <i class="fa-solid fa-chevron-right"></i>
-                </a>
+{{-- Barion fizetési modul admin menüpontja.
 
-                <hr class="d-block w-fill my-1 mx-2">
+     A webshop-ai-default csomag oldalsávja már tartalmazza a "Barion" pontot a
+     Webshop menücsoportban, ezért ez itt ki van kommentelve – különben duplán
+     jelenne meg. Akkor kell aktiválni, ha a Barion webshop csomag nélkül,
+     önállóan kerül be egy projektbe.
 
-                <a href="/label-list">
-                    Címkék <i class="fa-solid fa-chevron-right"></i>
-                </a>
-            </div>
+<div class="mb-1">
+    <a class="menu-point collapsed"
+       data-toggle="collapse" href="#barionCollapse" role="button"
+    >
+        <span><i class="fas fa-credit-card mr-1"></i>Barion</span>
+        <i class="fa-solid fa-chevron-down"></i>
+    </a>
+    <div class="collapse collapse-box" id="barionCollapse">
+        <div class="collapse-menu-points">
+            <a href="/webshop/barion/settings" class="fw-800">
+                Beállítások <i class="fa-solid fa-chevron-right"></i>
+            </a>
         </div>
     </div>
-@endif
+</div>
+--}}

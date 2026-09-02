@@ -11,6 +11,7 @@ use Weboldalnet\CommerceCore\Data\PaymentRequestData;
 use Weboldalnet\CommerceCore\Status\PaymentStatus;
 use Weboldalnet\CommerceBarion\Services\BarionPaymentService;
 use Weboldalnet\CommerceBarion\Services\BarionCallbackService;
+use Weboldalnet\CommerceBarion\Services\BarionSettingsService;
 
 class BarionPaymentProvider implements PaymentProviderInterface
 {
@@ -30,7 +31,8 @@ class BarionPaymentProvider implements PaymentProviderInterface
 
     public function getName()
     {
-        return config('commerce-barion.default_payment_method_label', 'Barion bankkártyás fizetés');
+        // A pénztárban megjelenő elnevezés adminból szerkeszthető.
+        return (string) BarionSettingsService::get('payment_method_label', 'Barion bankkártyás fizetés');
     }
 
     public function isOnline()

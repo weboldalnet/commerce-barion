@@ -29,7 +29,7 @@ class BarionCallbackService
      */
     protected function logCallback(array $payload, $isSuccess, $errorMessage = null, $orderId = null): void
     {
-        if (!$this->logger || !config('commerce-barion.log_payloads', true)) {
+        if (!$this->logger || !BarionSettingsService::getBool('log_payloads', true)) {
             return;
         }
 

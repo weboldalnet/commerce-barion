@@ -3,7 +3,6 @@
 namespace Weboldalnet\CommerceBarion\Services;
 
 use Barion\BarionClient;
-use Barion\Enumerations\BarionEnvironment;
 use Barion\Enumerations\Currency;
 use Barion\Enumerations\UILocale;
 use Barion\Enumerations\PaymentType;
@@ -16,6 +15,7 @@ use Weboldalnet\CommerceCore\Services\ProviderLogger;
 
 class BarionPaymentService
 {
+    /** @var BarionClient|null */
     protected $client;
 
     /** @var ProviderLogger|null */
@@ -23,8 +23,6 @@ class BarionPaymentService
 
     public function __construct()
     {
-        $this->client = BarionClientFactory::create();
-
         try {
             $this->logger = app(ProviderLogger::class);
         } catch (\Throwable $e) {
@@ -33,12 +31,27 @@ class BarionPaymentService
     }
 
     /**
-     * Naplózás a commerce_provider_logs táblába, ha a commerce-barion.log_payloads engedélyezett.
+     * A Barion kliens késleltetve jön létre.
+     *
+     * Így a beállítások mentése után az első hívás már az új POSKey-t és
+     * környezetet használja – nem ragad benne egy boot időben felépített kliens.
+     */
+    protected function client(): BarionClient
+    {
+        if (!$this->client) {
+            $this->client = BarionClientFactory::create();
+        }
+
+        return $this->client;
+    }
+
+    /**
+     * Naplózás a commerce_provider_logs táblába, ha a naplózás engedélyezett.
      * A POSKey soha nem kerül bele a naplózott payloadba.
      */
     protected function logApiCall($endpoint, array $request, $response, $isSuccess, $errorMessage = null, $orderId = null)
     {
-        if (!$this->logger || !config('commerce-barion.log_payloads', true)) {
+        if (!$this->logger || !BarionSettingsService::getBool('log_payloads', true)) {
             return;
         }
 
@@ -88,8 +101,8 @@ class BarionPaymentService
             'callback_url' => $data->callbackUrl,
             'return_url' => $data->returnUrl,
             'items' => $data->items,
-            'environment' => config('commerce-barion.environment'),
-            'payment_type' => config('commerce-barion.payment_type'),
+            'environment' => BarionSettingsService::environment(),
+            'payment_type' => BarionSettingsService::get('payment_type'),
         ];
     }
 
@@ -99,46 +112,45 @@ class BarionPaymentService
     public function startPayment(PaymentRequestData $data)
     {
         $request = new PreparePaymentRequestModel();
-        
-        $request->POSKey = config('commerce-barion.pos_key');
-        
+
+        $request->POSKey = (string) BarionSettingsService::get('pos_key');
+
         try {
-            $paymentType = config('commerce-barion.payment_type', 'Immediate');
+            $paymentType = (string) BarionSettingsService::get('payment_type', 'Immediate');
             $request->PaymentType = PaymentType::from($paymentType);
         } catch (\Throwable $e) {
             $request->PaymentType = PaymentType::Immediate;
         }
 
-        $request->PaymentWindow = config('commerce-barion.payment_window', '0.00:30:00');
-        
-        $fundingSources = config('commerce-barion.funding_sources', ['All']);
+        $request->PaymentWindow = (string) BarionSettingsService::get('payment_window', '0.00:30:00');
+
         $mappedFundingSources = [];
-        foreach ($fundingSources as $source) {
+        foreach (BarionSettingsService::fundingSources() as $source) {
             try {
                 $mappedFundingSources[] = FundingSourceType::from($source);
             } catch (\Throwable $e) {
-                // Skip invalid funding sources
+                // Ismeretlen forrás – kihagyjuk, nem buktatjuk el a fizetést.
             }
         }
         $request->FundingSources = !empty($mappedFundingSources) ? $mappedFundingSources : [FundingSourceType::All];
 
         $request->PaymentRequestId = (string)($data->orderNumber ?: $data->orderId);
-        $request->PayerHint = config('commerce-barion.payer_hint_enabled', true) ? $data->customerEmail : null;
+        $request->PayerHint = BarionSettingsService::getBool('payer_hint_enabled', true) ? $data->customerEmail : null;
         $request->Locale = $this->mapLanguage($data->language);
         try {
             $request->Currency = Currency::from(strtoupper($data->currency));
         } catch (\Throwable $e) {
-            $request->Currency = Currency::HUF;
+            $request->Currency = $this->defaultCurrency();
         }
-        $request->CallbackUrl = $data->callbackUrl ?: (config('commerce-barion.callback_url') ?: route('commerce.barion.callback'));
-        $request->RedirectUrl = $data->returnUrl ?: (config('commerce-barion.redirect_url') ?: route('commerce.barion.return'));
-        
+        $request->CallbackUrl = $data->callbackUrl ?: (BarionSettingsService::get('callback_url') ?: route('commerce.barion.callback'));
+        $request->RedirectUrl = $data->returnUrl ?: (BarionSettingsService::get('redirect_url') ?: route('commerce.barion.return'));
+
         // Tranzakció összeállítása
         $transaction = new PaymentTransactionModel();
         $transaction->POSTransactionId = (string)($data->orderNumber ?: $data->orderId);
-        $transaction->Payee = config('commerce-barion.payee');
+        $transaction->Payee = (string) BarionSettingsService::get('payee');
         $transaction->Total = (float)$data->amount;
-        
+
         // Tételek hozzáadása
         if (!empty($data->items)) {
             foreach ($data->items as $itemData) {
@@ -150,7 +162,7 @@ class BarionPaymentService
                 $item->UnitPrice = (float)($itemData['unit_price'] ?? 0);
                 $item->ItemTotal = (float)($itemData['total_price'] ?? ($item->UnitPrice * $item->Quantity));
                 $item->SKU = $itemData['sku'] ?? null;
-                
+
                 $transaction->AddItem($item);
             }
         } else {
@@ -163,11 +175,11 @@ class BarionPaymentService
             $item->ItemTotal = (float)$data->amount;
             $transaction->AddItem($item);
         }
-        
+
         $request->AddTransaction($transaction);
 
         try {
-            $response = $this->client->PreparePayment($request);
+            $response = $this->client()->PreparePayment($request);
         } catch (\Throwable $e) {
             $this->logApiCall('PreparePayment', self::loggableRequest($data), null, false, $e->getMessage(), $data->orderId);
             throw $e;
@@ -190,7 +202,7 @@ class BarionPaymentService
     public function getPaymentState(string $paymentId)
     {
         try {
-            $response = $this->client->getPaymentState($paymentId);
+            $response = $this->client()->getPaymentState($paymentId);
         } catch (\Throwable $e) {
             $this->logApiCall('GetPaymentState', ['payment_id' => $paymentId], null, false, $e->getMessage());
             throw $e;
@@ -207,11 +219,87 @@ class BarionPaymentService
     }
 
     /**
+     * Kapcsolat és POSKey ellenőrzése.
+     *
+     * A Barionnak nincs külön "ping" végpontja, ezért egy nem létező fizetés
+     * állapotát kérdezzük le. A válasz hibakódja árulja el, mi a helyzet:
+     * hitelesítési hiba = rossz POSKey, "nincs ilyen fizetés" = a kulcs jó.
+     * Így a teszt nem hoz létre valódi fizetést.
+     */
+    public function testConnection(): array
+    {
+        if (!BarionSettingsService::hasCredentials()) {
+            return [
+                'success' => false,
+                'message' => 'Hiányzó POSKey vagy kedvezményezett e-mail cím.',
+            ];
+        }
+
+        $environmentLabel = BarionSettingsService::isProd() ? 'éles' : 'teszt (sandbox)';
+
+        try {
+            $response = $this->client()->GetPaymentState('00000000-0000-0000-0000-000000000000');
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'message' => 'Nem sikerült elérni a Barion API-t: ' . $e->getMessage(),
+            ];
+        }
+
+        // Elvi eset: egy csupa nulla azonosítóra nem kaphatunk sikeres választ.
+        if (!empty($response->RequestSuccessful)) {
+            return [
+                'success' => true,
+                'message' => 'A Barion API elérhető (' . $environmentLabel . ' környezet).',
+            ];
+        }
+
+        $errorCode = '';
+        $description = '';
+        if (!empty($response->Errors)) {
+            $errorCode = (string) ($response->Errors[0]->ErrorCode ?? '');
+            $description = (string) ($response->Errors[0]->Description ?? $response->Errors[0]->Title ?? '');
+        }
+
+        // Hitelesítési jellegű hibák: a POSKey vagy a bolt nem jó.
+        $authErrors = ['AuthenticationFailed', 'InvalidPOSKey', 'ShopNotExists', 'ShopNotFound', 'Unauthorized'];
+        foreach ($authErrors as $authError) {
+            if (stripos($errorCode, $authError) !== false) {
+                return [
+                    'success' => false,
+                    'message' => 'A Barion elutasította a POSKey-t (' . $environmentLabel . ' környezet): '
+                        . ($description ?: $errorCode),
+                ];
+            }
+        }
+
+        // Bármilyen más hiba azt jelenti, hogy a hitelesítés átment, csak a
+        // lekérdezett fizetés nem létezik – pontosan ezt vártuk.
+        return [
+            'success' => true,
+            'message' => 'A POSKey érvényes, a Barion API elérhető (' . $environmentLabel . ' környezet).',
+        ];
+    }
+
+    /**
+     * Az alapértelmezett pénznem a beállításokból, érvénytelen érték esetén HUF.
+     */
+    protected function defaultCurrency(): Currency
+    {
+        try {
+            return Currency::from(strtoupper((string) BarionSettingsService::get('currency', 'HUF')));
+        } catch (\Throwable $e) {
+            return Currency::HUF;
+        }
+    }
+
+    /**
      * Nyelv kód leképezése Barion formátumra.
      */
     protected function mapLanguage(?string $lang): UILocale
     {
-        $lang = strtoupper($lang);
+        $lang = strtoupper((string) $lang);
+
         return match ($lang) {
             'HU' => UILocale::HU,
             'EN' => UILocale::EN,
@@ -222,7 +310,19 @@ class BarionPaymentService
             'CZ' => UILocale::CZ,
             'GR' => UILocale::GR,
             'ES' => UILocale::ES,
-            default => UILocale::from(config('commerce-barion.locale', 'hu-HU')),
+            default => $this->defaultLocale(),
         };
+    }
+
+    /**
+     * A beállított alapértelmezett nyelv, érvénytelen érték esetén magyar.
+     */
+    protected function defaultLocale(): UILocale
+    {
+        try {
+            return UILocale::from((string) BarionSettingsService::get('locale', 'hu-HU'));
+        } catch (\Throwable $e) {
+            return UILocale::HU;
+        }
     }
 }

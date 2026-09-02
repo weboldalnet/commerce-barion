@@ -1,6 +1,11 @@
 <?php
 /**
  * Barion fizetési provider konfiguráció.
+ *
+ * FONTOS: az itt szereplő értékek csak ALAPÉRTELMEZÉSEK. Az admin felületen
+ * (Webshop → Barion) megadott – és titkosítva tárolt – beállítások mindig
+ * erősebbek, ugyanaz a minta, mint a commerce-gls és commerce-szamlazzhu
+ * csomagoknál. Így éles környezetben nem kell .env-hez nyúlni.
  */
 return [
     'enabled' => env('COMMERCE_BARION_ENABLED', true),
@@ -11,6 +16,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | Értékek: 'test' (Sandbox) vagy 'prod' (Live)
+    | Minden más értéket a rendszer tesztnek tekint, hogy egy elgépelés soha ne
+    | indítson véletlenül éles fizetést.
     |
     */
     'environment' => env('COMMERCE_BARION_ENVIRONMENT', 'test'),
@@ -21,6 +28,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | A Bariontól kapott 36 karakter hosszú GUID azonosító.
+    | A teszt és az éles fiókhoz külön POSKey tartozik.
     |
     */
     'pos_key' => env('COMMERCE_BARION_POS_KEY', ''),
@@ -40,8 +48,7 @@ return [
     | Fizetés típusa
     |--------------------------------------------------------------------------
     |
-    | Értékek: 'Immediate' vagy 'Reservation'
-    | Alapértelmezett: 'Immediate'
+    | Értékek: 'Immediate', 'Reservation' vagy 'DelayedCapture'
     |
     */
     'payment_type' => env('COMMERCE_BARION_PAYMENT_TYPE', 'Immediate'),
@@ -51,27 +58,23 @@ return [
     | Finanszírozási források
     |--------------------------------------------------------------------------
     |
-    | Értékek tömbje: 'All', 'Balance', 'BankCard', 'GooglePay', 'ApplePay'
-    | Alapértelmezett: ['All']
+    | A Barion SDK FundingSourceType értékei (pontosan így írva):
+    | 'All', 'Balance', 'Bankcard', 'BankTransfer', 'GooglePay', 'ApplePay'
+    |
+    | Az adminban vesszővel elválasztott listaként tárolódik, itt tömbként is
+    | megadható – a BarionSettingsService mindkettőt elfogadja.
     |
     */
     'funding_sources' => ['All'],
 
     /*
     |--------------------------------------------------------------------------
-    | Vendég fizetés (Guest Checkout)
-    |--------------------------------------------------------------------------
-    |
-    | Ha true, a vásárló Barion regisztráció nélkül is fizethet bankkártyával.
-    | Megjegyzés: v3 API-ban ez a mező megszűnt, de kompatibilitás miatt maradhat.
-    |
-    */
-    'guest_checkout_enabled' => env('COMMERCE_BARION_GUEST_CHECKOUT', true),
-
-    /*
-    |--------------------------------------------------------------------------
     | Nyelv és Pénznem
     |--------------------------------------------------------------------------
+    |
+    | Csak tartalék értékek: elsősorban a rendelés nyelve és pénzneme dönt,
+    | ezek akkor lépnek életbe, ha az érvénytelen vagy ismeretlen.
+    |
     */
     'locale' => env('COMMERCE_BARION_LOCALE', 'hu-HU'),
     'currency' => env('COMMERCE_BARION_CURRENCY', 'HUF'),
@@ -92,18 +95,29 @@ return [
     | Formátum: [nap].[óra]:[perc]:[másodperc] (pl. "0.00:30:00" = 30 perc)
     |
     */
-    'payment_window' => '0.00:30:00',
+    'payment_window' => env('COMMERCE_BARION_PAYMENT_WINDOW', '0.00:30:00'),
 
     /*
     |--------------------------------------------------------------------------
     | Payer Hint
     |--------------------------------------------------------------------------
     |
-    | Ha true, a vásárló email címe átadásra kerül a Barionnak.
+    | Ha true, a vásárló email címe átadásra kerül a Barionnak, így a Barion
+    | fizetőoldalán előre kitöltve jelenik meg.
     |
     */
     'payer_hint_enabled' => env('COMMERCE_BARION_PAYER_HINT_ENABLED', true),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Azonosítók (nem admin-szerkeszthetők)
+    |--------------------------------------------------------------------------
+    |
+    | A provider_code a rendelésekben tárolt fizetési mód kódja – megváltoztatása
+    | a már leadott rendeléseket tenné felismerhetetlenné, ezért nem kerül ki az
+    | admin felületre. A megjelenő elnevezés viszont ott szerkeszthető.
+    |
+    */
     'provider_code' => 'barion',
     'default_payment_method_label' => 'Barion bankkártyás fizetés',
 
