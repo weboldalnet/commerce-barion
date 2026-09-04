@@ -89,6 +89,32 @@ class BarionPaymentProvider implements PaymentProviderInterface
         return $this->callbackService->handle($payload);
     }
 
+    /**
+     * Egy függőben lévő fizetés valódi állapotának lekérdezése a Bariontól.
+     *
+     * NEM része a PaymentProvider szerződésnek – a hívó method_exists()-tel nézi
+     * meg, hogy a provider tudja-e. Akkor hasznos, amikor a Barion callbackje
+     * nem ért el minket (pl. fejlesztői gép), vagy még nem érkezett meg.
+     *
+     * A Barion a SAJÁT PaymentId-jára kérdez (ez nálunk a provider_transaction_id),
+     * nem a rendelésszámra – ezért kapjuk meg a teljes tranzakciót.
+     * A callbackService->handle() amúgy is állapotlekérdezést végez
+     * (GetPaymentState), tehát ugyanaz az út fut le, mint egy valódi callbacknél.
+     *
+     * @param mixed $transaction PaymentTransaction vagy Barion paymentId string
+     */
+    public function queryStatus($transaction)
+    {
+        $paymentId = is_object($transaction)
+            ? ($transaction->provider_transaction_id ?? null)
+            : $transaction;
+
+        if (!$paymentId) {
+            return null;
+        }
+
+        return $this->callbackService->handle(['paymentId' => $paymentId]);
+    }
     public function refund(PaymentRefundData $data)
     {
         // Refund egyelőre not_supported
